@@ -22,7 +22,7 @@ async function fetchCurrentProfile() {
     .eq('id', CURRENT_USER.id)
     .single();
   if (error) { console.error('Erreur chargement profil :', error); CURRENT_PROFILE = null; return null; }
-  CURRENT_PROFILE = data;
+  CURRENT_PROFILE = data;a
   return data;
 }
 
@@ -359,13 +359,14 @@ function toast(msg) {
   if (!t) {
     t = document.createElement('div');
     t.id = 'toast';
-    t.style.cssText = 'position:fixed;bottom:22px;left:50%;transform:translateX(-50%);background:var(--ink);color:#fff;padding:10px 18px;border-radius:8px;font-size:13px;z-index:999;box-shadow:0 4px 16px rgba(0,0,0,.2);';
+    t.style.cssText = 'position:fixed;bottom:22px;left:50%;transform:translateX(-50%);background:var(--ink);color:#fff;padding:10px 18px;border-radius:8px;font-size:13px;z-index:999;box-shadow:0 4px 16px rgba(0,0,0,.2);max-width:min(90vw,480px);text-align:center;';
     document.body.appendChild(t);
   }
   t.textContent = msg;
   t.style.opacity = '1';
   clearTimeout(window._toastTimer);
-  window._toastTimer = setTimeout(() => { t.style.opacity = '0'; }, 2600);
+  const duration = Math.min(7000, Math.max(2600, msg.length * 60));
+  window._toastTimer = setTimeout(() => { t.style.opacity = '0'; }, duration);
 }
 
 /* ---------------- Render root ---------------- */
@@ -1897,7 +1898,14 @@ async function deletePerson(kind, id) {
   if (!confirm('Confirmer la suppression ?')) return;
   const table = kind === 'animateurs' ? 'animateurs' : 'musiciens';
   const { error } = await sb.from(table).delete().eq('id', id);
-  if (error) { toast('Erreur lors de la suppression : ' + error.message); return; }
+  if (error) {
+    if (error.code === '23503') {
+      toast('Impossible de supprimer : cette personne est encore assignée à une ou plusieurs dates du calendrier. Réassigne d’abord ces dates, puis réessaie.');
+    } else {
+      toast('Erreur lors de la suppression : ' + error.message);
+    }
+    return;
+  }
   if (kind === 'animateurs') DB.animateurs = DB.animateurs.filter(p => p.id !== id);
   else DB.musiciens = DB.musiciens.filter(p => p.id !== id);
   toast('Supprimé'); render();
