@@ -2016,12 +2016,9 @@ function pageAdmin() {
     </div>
     <div class="card">
       <h3>Données de l’application</h3>
-      <p class="muted">Toutes les données sont stockées localement dans ce navigateur.</p>
+      <p class="muted">Les données sont désormais partagées sur Supabase (plus de stockage local par navigateur).</p>
       <div class="row" style="margin-top:10px;flex-wrap:wrap;">
-        <button onclick="exportData()">Exporter (JSON)</button>
-        <button onclick="document.getElementById('import-file').click()">Réimporter un JSON</button>
-        <input type="file" id="import-file" accept="application/json" style="display:none" onchange="importData(this.files[0])">
-        <button class="danger" onclick="resetData()">Réinitialiser les données</button>
+        <button onclick="exportData()">Exporter une sauvegarde (JSON)</button>
       </div>
     </div>
   </div>
@@ -2086,33 +2083,42 @@ function renderStructureEditor(entity) {
   </div>` : ''}
   `;
 }
-function updateStructField(entity, key, prop, value) {
+async function updateStructField(entity, key, prop, value) {
   const field = (DB.schema[entity] || []).find(f => f.key === key);
   if (!field) return;
+  const payload = { label: field.label, type: field.type };
+  payload[prop] = value;
+  const { error } = await sb.from('custom_field_defs').update(payload).eq('entity', entity).eq('key', key);
+  if (error) { toast('Erreur : ' + error.message); return; }
   field[prop] = value;
-  persist(); toast('Champ mis à jour');
+  toast('Champ mis à jour');
 }
-function addStructField(entity) {
+async function addStructField(entity) {
   const key = document.getElementById('struct-new-key').value.trim().toLowerCase().replace(/[^a-z0-9_]/g,'');
   const label = document.getElementById('struct-new-label').value.trim();
   const type = document.getElementById('struct-new-type').value;
   if (!key || !label) { toast('Clé et libellé requis'); return; }
   DB.schema[entity] = DB.schema[entity] || [];
   if (DB.schema[entity].find(f => f.key === key)) { toast('Cette clé existe déjà'); return; }
+  const { error } = await sb.from('custom_field_defs').insert({ entity, key, label, type });
+  if (error) { toast('Erreur : ' + error.message); return; }
   DB.schema[entity].push({ key, label, type });
-  persist(); toast('Champ personnalisé ajouté'); render();
+  toast('Champ personnalisé ajouté'); render();
 }
-function removeStructField(entity, key) {
+async function removeStructField(entity, key) {
   if (!confirm('Supprimer ce champ personnalisé ? Les valeurs déjà saisies seront perdues.')) return;
+  const { error } = await sb.from('custom_field_defs').delete().eq('entity', entity).eq('key', key);
+  if (error) { toast('Erreur : ' + error.message); return; }
   DB.schema[entity] = (DB.schema[entity]||[]).filter(f => f.key !== key);
-  persist(); toast('Champ supprimé'); render();
+  toast('Champ supprimé'); render();
 }
 function renderRefTableEditor(key) {
   const dict = DB[key] || {};
   const entries = Object.entries(dict);
+  const isClochers = key === 'clochers';
   return `
   <table>
-    <thead><tr><th>Code</th><th>Libellé</th><th></th></tr></thead>
+    <thead><tr><th>${isClochers ? 'ID' : 'Code'}</th><th>Libellé</th><th></th></tr></thead>
     <tbody>
       ${entries.map(([code, label]) => `
         <tr>
@@ -2121,25 +2127,50 @@ function renderRefTableEditor(key) {
           <td class="no-print"><button class="ghost" onclick="deleteRefEntry('${key}','${code}')">Supprimer</button></td>
         </tr>`).join('')}
       <tr>
-        <td><input id="ref-new-code" placeholder="Code" style="font-family:monospace;"></td>
+        ${isClochers ? `<td class="muted" style="font-size:11px;">auto</td>` : `<td><input id="ref-new-code" placeholder="Code" style="font-family:monospace;"></td>`}
         <td><input id="ref-new-label" placeholder="Libellé"></td>
         <td class="no-print"><button class="primary" onclick="addRefEntry('${key}')">Ajouter</button></td>
       </tr>
     </tbody>
   </table>`;
 }
-function updateRefEntry(key, code, value) {
-  DB[key][code] = value; persist(); toast('Mis à jour');
+async function updateRefEntry(key, code, value) {
+  if (key === 'clochers') {
+    const { error } = await sb.from('clochers').update({ nom: value }).eq('id', Number(code));
+    if (error) { toast('Erreur : ' + error.message); return; }
+  } else {
+    const { error } = await sb.from(key).update({ libelle: value }).eq('code', code);
+    if (error) { toast('Erreur : ' + error.message); return; }
+  }
+  DB[key][code] = value; toast('Mis à jour');
 }
-function deleteRefEntry(key, code) {
+async function deleteRefEntry(key, code) {
   if (!confirm('Supprimer cette entrée de la table ?')) return;
-  delete DB[key][code]; persist(); render();
+  if (key === 'clochers') {
+    const { error } = await sb.from('clochers').delete().eq('id', Number(code));
+    if (error) { toast(error.code === '23503' ? 'Impossible de supprimer : ce clocher est encore utilisé ailleurs.' : 'Erreur : ' + error.message); return; }
+  } else {
+    const { error } = await sb.from(key).delete().eq('code', code);
+    if (error) { toast(error.code === '23503' ? 'Impossible de supprimer : cette entrée est encore utilisée ailleurs.' : 'Erreur : ' + error.message); return; }
+  }
+  delete DB[key][code]; render();
 }
-function addRefEntry(key) {
-  const code = document.getElementById('ref-new-code').value.trim();
+async function addRefEntry(key) {
+  const codeEl = document.getElementById('ref-new-code');
+  const code = codeEl ? codeEl.value.trim() : '';
   const label = document.getElementById('ref-new-label').value.trim();
-  if (!code || !label) { toast('Code et libellé requis'); return; }
-  DB[key][code] = label; persist(); toast('Entrée ajoutée'); render();
+  if (key === 'clochers') {
+    if (!label) { toast('Libellé requis'); return; }
+    const { data: inserted, error } = await sb.from('clochers').insert({ nom: label }).select().single();
+    if (error) { toast('Erreur : ' + error.message); return; }
+    DB.clochers[inserted.id] = inserted.nom;
+  } else {
+    if (!code || !label) { toast('Code et libellé requis'); return; }
+    const { error } = await sb.from(key).insert({ code, libelle: label });
+    if (error) { toast('Erreur : ' + error.message); return; }
+    DB[key][code] = label;
+  }
+  toast('Entrée ajoutée'); render();
 }
 function exportData() {
   const blob = new Blob([JSON.stringify(DB, null, 2)], { type: 'application/json' });
@@ -2149,22 +2180,8 @@ function exportData() {
   a.click();
 }
 function importData(file) {
-  if (!file) return;
-  const reader = new FileReader();
-  reader.onload = () => {
-    try {
-      const data = JSON.parse(reader.result);
-      if (!data || typeof data !== 'object' || !Array.isArray(data.chants)) throw new Error('format invalide');
-      DB = data; persist(); toast('Base de données réimportée'); nav('#/accueil'); render();
-    } catch (e) {
-      toast('Fichier JSON invalide');
-    }
-  };
-  reader.readAsText(file);
+  toast('La réimportation JSON n’est plus disponible : les données sont désormais partagées sur Supabase, pas stockées dans ce navigateur. Modifiez les données directement dans l’app ou dans Supabase.');
 }
 function resetData() {
-  if (!confirm('Réinitialiser toutes les données à l’état initial ? Cette action est irréversible.')) return;
-  localStorage.removeItem(LS_KEY);
-  DB = loadDB();
-  toast('Données réinitialisées'); nav('#/accueil'); render();
+  toast('La réinitialisation n’est plus disponible depuis l’app : les données sont partagées sur Supabase. Contactez le webmaster technique si une remise à zéro est vraiment nécessaire.');
 }
