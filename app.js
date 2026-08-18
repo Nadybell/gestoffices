@@ -1867,32 +1867,40 @@ function openPersonForm(kind, editId) {
     </div>
   </div>`;
 }
-function savePerson(kind, editId) {
+async function savePerson(kind, editId) {
   if (!can('manage-personnes')) return;
   const isAnim = kind === 'animateurs';
   const val = i => document.getElementById(i).value.trim();
   const nom = val('pf2-nom'), prenom = val('pf2-prenom');
   if (!nom || !prenom) { toast('Nom et prénom obligatoires'); return; }
-  const data = { nom, prenom, date_arrivee: val('pf2-date')||null, clocher: val('pf2-clocher')?Number(val('pf2-clocher')):null, custom: readCustomFieldValues(kind) };
-  if (!isAnim) data.instrument = val('pf2-instrument');
+  const clocherId = val('pf2-clocher') ? Number(val('pf2-clocher')) : null;
+  const payload = { nom, prenom, date_arrivee: val('pf2-date')||null, clocher_id: clocherId, custom: readCustomFieldValues(kind) };
+  if (!isAnim) payload.instrument = val('pf2-instrument');
+  const table = isAnim ? 'animateurs' : 'musiciens';
   const list = isAnim ? DB.animateurs : DB.musiciens;
   if (editId) {
+    const { error } = await sb.from(table).update(payload).eq('id', editId);
+    if (error) { toast('Erreur lors de l’enregistrement : ' + error.message); return; }
     const idx = list.findIndex(p => p.id === editId);
-    list[idx] = { ...list[idx], ...data };
+    list[idx] = { ...list[idx], ...payload, clocher: clocherId };
     toast('Modifié');
   } else {
-    const idKey = isAnim ? 'nextAnimateurId' : 'nextMusicienId';
-    list.push({ id: DB[idKey]++, ...data });
+    const { data: inserted, error } = await sb.from(table).insert(payload).select().single();
+    if (error) { toast('Erreur lors de l’enregistrement : ' + error.message); return; }
+    list.push({ ...inserted, clocher: inserted.clocher_id });
     toast('Enregistré');
   }
-  persist(); document.getElementById('person-form-zone').innerHTML=''; render();
+  document.getElementById('person-form-zone').innerHTML=''; render();
 }
-function deletePerson(kind, id) {
+async function deletePerson(kind, id) {
   if (!can('manage-personnes')) return;
   if (!confirm('Confirmer la suppression ?')) return;
+  const table = kind === 'animateurs' ? 'animateurs' : 'musiciens';
+  const { error } = await sb.from(table).delete().eq('id', id);
+  if (error) { toast('Erreur lors de la suppression : ' + error.message); return; }
   if (kind === 'animateurs') DB.animateurs = DB.animateurs.filter(p => p.id !== id);
   else DB.musiciens = DB.musiciens.filter(p => p.id !== id);
-  persist(); toast('Supprimé'); render();
+  toast('Supprimé'); render();
 }
 
 /* ---------------- Admin (WebMaster) ---------------- */
