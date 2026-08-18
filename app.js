@@ -22,7 +22,7 @@ async function fetchCurrentProfile() {
     .eq('id', CURRENT_USER.id)
     .single();
   if (error) { console.error('Erreur chargement profil :', error); CURRENT_PROFILE = null; return null; }
-  CURRENT_PROFILE = data;a
+  CURRENT_PROFILE = data;
   return data;
 }
 
@@ -1895,12 +1895,28 @@ async function savePerson(kind, editId) {
 }
 async function deletePerson(kind, id) {
   if (!can('manage-personnes')) return;
+  const isAnim = kind === 'animateurs';
+  const table = isAnim ? 'animateurs' : 'musiciens';
+  const person = (isAnim ? DB.animateurs : DB.musiciens).find(p => p.id === id);
+  const filterCol = isAnim ? 'chantre_id' : 'organiste_id';
+
+  const { data: linked, error: checkError } = await sb
+    .from('calendrier')
+    .select('date, evenement')
+    .eq(filterCol, id)
+    .order('date');
+  if (checkError) { toast('Erreur de vérification : ' + checkError.message); return; }
+  if (linked && linked.length) {
+    const dates = linked.map(o => fmtDate(o.date)).join(', ');
+    toast(`${person.nom} ${person.prenom} est engagé(e) dans le(s) office(s) des dates suivantes : ${dates}. Désengagez-le/la avant de supprimer.`);
+    return;
+  }
+
   if (!confirm('Confirmer la suppression ?')) return;
-  const table = kind === 'animateurs' ? 'animateurs' : 'musiciens';
   const { error } = await sb.from(table).delete().eq('id', id);
   if (error) {
     if (error.code === '23503') {
-      toast('Impossible de supprimer : cette personne est encore assignée à une ou plusieurs dates du calendrier. Réassigne d’abord ces dates, puis réessaie.');
+      toast('Impossible de supprimer : cette personne est encore référencée ailleurs.');
     } else {
       toast('Erreur lors de la suppression : ' + error.message);
     }
