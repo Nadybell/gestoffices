@@ -100,6 +100,60 @@ function mediaUrl(path) {
   return data ? data.publicUrl : null;
 }
 
+/* Nettoie un nom de fichier pour le web : enlève accents, espaces, caractères spéciaux */
+function sanitizeFilename(name) {
+  const dot = name.lastIndexOf('.');
+  const base = dot > -1 ? name.slice(0, dot) : name;
+  const ext = dot > -1 ? name.slice(dot) : '';
+  const clean = base.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-zA-Z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+  return (clean || 'fichier') + ext.toLowerCase();
+}
+
+/* Uploade un fichier dans le bucket "medias", sous-dossier donné (ex: "partitions", "audios").
+   Retourne le chemin relatif (à stocker en base) ou null en cas d'erreur. */
+async function uploadMediaFile(file, folder) {
+  const path = `${folder}/${Date.now()}-${sanitizeFilename(file.name)}`;
+  const { error } = await sb.storage.from('medias').upload(path, file);
+  if (error) { toast('Erreur lors de l’envoi du fichier : ' + error.message); return null; }
+  return path;
+}
+
+async function handlePartitionUpload() {
+  const fileInput = document.getElementById('f-partition-file');
+  const file = fileInput.files[0];
+  if (!file) { toast('Choisis d’abord un fichier PDF'); return; }
+  const statusEl = document.getElementById('f-partition-upload-status');
+  statusEl.textContent = 'Envoi en cours…';
+  const path = await uploadMediaFile(file, 'partitions');
+  if (path) {
+    document.getElementById('f-partition').value = path;
+    statusEl.textContent = '✓ Fichier envoyé — pense à cliquer sur Enregistrer ci-dessous';
+    fileInput.value = '';
+  } else {
+    statusEl.textContent = '';
+  }
+}
+
+async function handleAudioUpload() {
+  const labelInput = document.getElementById('f-audio-label');
+  const fileInput = document.getElementById('f-audio-file');
+  const label = labelInput.value.trim() || 'Piste';
+  const file = fileInput.files[0];
+  if (!file) { toast('Choisis d’abord un fichier audio'); return; }
+  const statusEl = document.getElementById('f-audio-upload-status');
+  statusEl.textContent = 'Envoi en cours…';
+  const path = await uploadMediaFile(file, 'audios');
+  if (path) {
+    const ta = document.getElementById('f-audios');
+    ta.value = (ta.value.trim() ? ta.value.trim() + '\n' : '') + `${label}|${path}`;
+    labelInput.value = ''; fileInput.value = '';
+    statusEl.textContent = '✓ Piste ajoutée — pense à cliquer sur Enregistrer ci-dessous';
+  } else {
+    statusEl.textContent = '';
+  }
+}
+
+
 async function loadDBFromSupabase() {
   const [
     { data: chants, error: e1 },
@@ -1083,8 +1137,22 @@ function pageChantForm(id) {
       <div class="field" style="grid-column:1/-1;">
         <label>Pistes audio décomposées <span class="muted">(une par ligne : Nom de la piste | chemin ou URL — ex. les 4 voix)</span></label>
         <textarea id="f-audios" rows="3" placeholder="Refrain|media/Audios/mon-chant-ref.aac">${esc((c.audios||[]).map(a=>`${a.label}|${a.src||''}`).join('\n'))}</textarea>
+        <div style="margin-top:6px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+          <input type="text" id="f-audio-label" placeholder="Nom de la piste (ex. Refrain)" style="max-width:180px;">
+          <input type="file" id="f-audio-file" accept="audio/*" style="font-size:12px;">
+          <button type="button" class="ghost" onclick="handleAudioUpload()">+ Ajouter cette piste</button>
+          <span id="f-audio-upload-status" class="muted" style="font-size:12px;"></span>
+        </div>
       </div>
-      <div class="field" style="grid-column:1/-1;"><label>Lien / chemin partition <span class="muted">(complétez avec le nom du fichier .pdf, ou collez une URL)</span></label><input id="f-partition" value="${esc(c.partition)}"></div>
+      <div class="field" style="grid-column:1/-1;">
+        <label>Lien / chemin partition <span class="muted">(complétez avec le nom du fichier .pdf, ou collez une URL)</span></label>
+        <input id="f-partition" value="${esc(c.partition)}">
+        <div style="margin-top:6px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+          <input type="file" id="f-partition-file" accept="application/pdf" style="font-size:12px;">
+          <button type="button" class="ghost" onclick="handlePartitionUpload()">Uploader ce PDF</button>
+          <span id="f-partition-upload-status" class="muted" style="font-size:12px;"></span>
+        </div>
+      </div>
       <div class="field" style="grid-column:1/-1;"><label>Texte</label><textarea id="f-texte" rows="8">${esc(c.texte)}</textarea></div>
       ${renderCustomFieldInputs('chants', c)}
     </div>
