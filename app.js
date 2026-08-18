@@ -240,7 +240,7 @@ window.addEventListener('DOMContentLoaded', async () => {
   await restoreSession();
   if (ROLE) await loadDBFromSupabase();
   render();
-  if (ROLE) showVacantPopupIfNeeded();
+  if (ROLE) { showVacantPopupIfNeeded(); showValidatedProgrammesPopupIfNeeded(); }
 });
 
 function nav(hash) { location.hash = hash; }
@@ -465,6 +465,7 @@ async function bootstrapAfterLogin() {
   nav('#/accueil');
   render();
   showVacantPopupIfNeeded();
+  showValidatedProgrammesPopupIfNeeded();
 }
 function chantHasMedia(c) {
   return !!c.partition || (c.audios && c.audios.length > 0) || !!c.youtube;
@@ -510,6 +511,50 @@ function showIncompleteChantsPopupIfNeeded() {
     </div>`;
   document.body.appendChild(overlay);
 }
+/* ---------------- Pop-up des programmes validés non consultés ---------------- */
+async function showValidatedProgrammesPopupIfNeeded() {
+  if (!CURRENT_USER) return;
+  const { data, error } = await sb.from('programmes_a_notifier').select('*').order('date');
+  if (error) { console.error('Erreur chargement programmes à notifier :', error); return; }
+  if (!data || !data.length) return;
+  const existing = document.getElementById('validated-programmes-overlay');
+  if (existing) existing.remove();
+
+  async function dismiss(navTo) {
+    const rows = data.map(p => ({ user_id: CURRENT_USER.id, programme_id: p.id }));
+    await sb.from('programme_notifications_vues').insert(rows);
+    const el = document.getElementById('validated-programmes-overlay');
+    if (el) el.remove();
+    if (navTo) { nav(navTo); render(); }
+  }
+
+  const overlay = document.createElement('div');
+  overlay.id = 'validated-programmes-overlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(43,36,29,0.5);z-index:998;display:flex;align-items:center;justify-content:center;';
+  overlay.innerHTML = `
+    <div style="background:var(--paper);border:1px solid var(--line-strong);border-radius:16px;box-shadow:0 12px 40px rgba(0,0,0,0.28);padding:24px;max-width:440px;width:90%;max-height:80vh;overflow:auto;">
+      <div style="text-align:center;">
+        <div style="font-size:28px;line-height:1;margin-bottom:8px;">✅</div>
+        <b style="font-family:'Fraunces',serif;font-size:18px;">Programme(s) validé(s)</b>
+        <p class="muted" style="margin:6px 0 14px;font-size:13px;">${data.length} programme(s) ont été validé(s). Cliquez pour consulter le détail.</p>
+      </div>
+      <div class="chant-list">
+        ${data.map(p => `
+          <div class="chant-row" style="cursor:pointer;" onclick="__dismissValidatedProgrammesPopup('#/programmes/${p.id}')">
+            <div class="rib" style="background:var(--sage)"></div>
+            <div style="flex:1;">
+              <div class="chant-title" style="font-size:14px;">${esc(p.titre)}</div>
+              <div class="chant-meta">${fmtDate(p.date)}</div>
+            </div>
+          </div>`).join('')}
+      </div>
+      <button class="primary" style="margin-top:16px;width:100%;" onclick="__dismissValidatedProgrammesPopup()">Fermer</button>
+    </div>`;
+  document.body.appendChild(overlay);
+  window.__dismissValidatedProgrammesPopup = dismiss;
+}
+
+/* ---------------- Dates vacantes ---------------- */
 function showVacantPopupIfNeeded() {
   if (!can('edit')) return;
   const count = computeVacantDates(8).length;
@@ -676,13 +721,17 @@ function computeVacantDates(weeksAhead) {
   });
   return vacant.sort((a,b) => a.date.localeCompare(b.date));
 }
-function markNoOffice(date, lieu) {
-  DB.noOffice.push({ date, lieu });
-  persist(); toast('Marqué « pas d’office »'); render();
+async function markNoOffice(date, lieu) {
+  const { data: inserted, error } = await sb.from('no_office').insert({ date, lieu_id: Number(lieu) }).select().single();
+  if (error) { toast('Erreur : ' + error.message); return; }
+  DB.noOffice.push({ ...inserted, lieu: inserted.lieu_id });
+  toast('Marqué « pas d’office »'); render();
 }
-function unmarkNoOffice(date, lieu) {
+async function unmarkNoOffice(date, lieu) {
+  const { error } = await sb.from('no_office').delete().eq('date', date).eq('lieu_id', Number(lieu));
+  if (error) { toast('Erreur : ' + error.message); return; }
   DB.noOffice = DB.noOffice.filter(n => !(n.date === date && String(n.lieu) === String(lieu)));
-  persist(); toast('Retiré de la liste'); render();
+  toast('Retiré de la liste'); render();
 }
 function goToVacantOffice(date, lieu) {
   window._prefillCalDate = date;
@@ -1319,7 +1368,7 @@ function generateProgramme() {
     </div>`;
 }
 
-function saveProgramme(date, typeMesse) {
+async function saveProgramme(date, typeMesse) {
   if (window._duplicateSourceDate && date === window._duplicateSourceDate) {
     toast('Un programme existe déjà à cette date !');
     return;
@@ -1332,13 +1381,15 @@ function saveProgramme(date, typeMesse) {
   const titre = document.getElementById('pf-titre').value.trim() || defaultProgTitre(date, typeMesse, clocherLabel(lieu));
   const ordinaire = document.getElementById('pf-ordinaire').value;
   const lecture = document.getElementById('pf-lecture').value.trim();
-  const prog = {
-    id: DB.nextProgId++, titre, date, lieu, type_messe: typeMesse || null, ordinaire_messe: ordinaire || null,
+  const payload = {
+    titre, date, lieu, type_messe: typeMesse || null, ordinaire_messe: ordinaire || null,
     lecture: lecture || null, slots: { ...window._genSlots }, statut: 'brouillon',
   };
-  DB.programmes.push(prog);
+  const { data: inserted, error } = await sb.from('programmes').insert(payload).select().single();
+  if (error) { toast('Erreur lors de l’enregistrement : ' + error.message); return; }
+  DB.programmes.push(inserted);
   window._duplicateSourceDate = null;
-  persist(); toast('Programme enregistré en brouillon'); nav('#/programmes/' + prog.id); render();
+  toast('Programme enregistré en brouillon'); nav('#/programmes/' + inserted.id); render();
 }
 
 /* ---------------- Programmes : détail ---------------- */
@@ -1401,7 +1452,6 @@ function pageProgrammeDetail(id) {
     <div class="row no-print">
       <button onclick="window.print()">Imprimer</button>
       ${can('validate') && p.statut !== 'validé' ? `<button class="primary" onclick="validateProgramme(${p.id})">Valider</button>` : ''}
-      ${can('edit') ? `<button onclick="sendNotification(${p.id})">Notifier les utilisateurs</button>` : ''}
       ${can('edit') ? `<button class="danger" onclick="deleteProgramme(${p.id})">Supprimer</button>` : ''}
     </div>
   </div>
@@ -1494,14 +1544,18 @@ async function quickCreateChant(slotCode, selectId, inputId) {
   input.value = '';
   toast('Chant ajouté au répertoire — pensez à compléter partition et audio avant de valider');
 }
-function saveProgrammeSlots(id) {
+async function saveProgrammeSlots(id) {
   const p = DB.programmes.find(x => x.id === id);
+  const newSlots = { ...p.slots };
   SLOTS.forEach(slot => {
-    if (p.slots[slot.code] === 'ORDINAIRE') return;
+    if (newSlots[slot.code] === 'ORDINAIRE') return;
     const el = document.getElementById('pd-slot-' + slot.code);
-    if (el) p.slots[slot.code] = el.value || null;
+    if (el) newSlots[slot.code] = el.value || null;
   });
-  persist(); toast('Programme mis à jour'); render();
+  const { error } = await sb.from('programmes').update({ slots: newSlots }).eq('id', id);
+  if (error) { toast('Erreur lors de l’enregistrement : ' + error.message); return; }
+  p.slots = newSlots;
+  toast('Programme mis à jour'); render();
 }
 function isChantComplete(chant) {
   return !!chant && chantIsDocComplete(chant);
@@ -1522,27 +1576,25 @@ function programmeIncompleteChants(p) {
   });
   return out;
 }
-function validateProgramme(id) {
+async function validateProgramme(id) {
   const p = DB.programmes.find(x => x.id === id);
   const incomplete = programmeIncompleteChants(p);
   if (incomplete.length) {
     toast(`Validation impossible : ${incomplete.length} chant(s) incomplet(s) (partition/audio manquant)`);
     return;
   }
-  p.statut = 'validé'; persist(); toast('Programme validé'); nav('#/programmes'); render();
+  const { error } = await sb.from('programmes').update({ statut: 'validé' }).eq('id', id);
+  if (error) { toast('Erreur lors de la validation : ' + error.message); return; }
+  p.statut = 'validé'; toast('Programme validé'); nav('#/programmes'); render();
 }
-function deleteProgramme(id) {
+async function deleteProgramme(id) {
   if (!confirm('Supprimer ce programme ?')) return;
+  const { error } = await sb.from('programmes').delete().eq('id', id);
+  if (error) { toast('Erreur lors de la suppression : ' + error.message); return; }
   DB.programmes = DB.programmes.filter(p => p.id !== id);
-  persist(); toast('Programme supprimé'); nav('#/programmes'); render();
+  toast('Programme supprimé'); nav('#/programmes'); render();
 }
-function sendNotification(progId) {
-  const p = DB.programmes.find(x => x.id === progId);
-  const totalUsers = DB.animateurs.length + DB.musiciens.length;
-  DB.notifications.push({ date: new Date().toISOString(), programme: p.titre, count: totalUsers });
-  persist();
-  toast(`Notification envoyée à ${totalUsers} utilisateurs`);
-}
+
 /* ---------------- Calendrier ---------------- */
 function musicienLabel(id) {
   const m = DB.musiciens.find(x => x.id == id);
@@ -1568,11 +1620,14 @@ function openLinkProgrammeSelector(officeId) {
   window._linkingOffice = officeId;
   render();
 }
-function linkProgrammeToOffice(officeId, programmeId) {
+async function linkProgrammeToOffice(officeId, programmeId) {
+  const newProgId = programmeId ? Number(programmeId) : null;
+  const { error } = await sb.from('calendrier').update({ programme_id: newProgId }).eq('id', officeId);
+  if (error) { toast('Erreur lors de la liaison : ' + error.message); return; }
   const o = DB.calendrier.find(x => x.id === officeId);
-  o.programmeId = programmeId ? Number(programmeId) : null;
+  o.programmeId = newProgId;
   window._linkingOffice = null;
-  persist(); toast('Programme relié'); render();
+  toast('Programme relié'); render();
 }
 function pageDatesVacantes() {
   if (!can('edit')) return pageForbidden();
@@ -1696,14 +1751,15 @@ function resolveClocherIdByLabel(text) {
   const found = Object.entries(DB.clochers).find(([k,v]) => v.toLowerCase() === text.toLowerCase());
   return found ? found[0] : null;
 }
-function getOrCreateClocherId(text) {
+async function getOrCreateClocherId(text) {
   const existing = resolveClocherIdByLabel(text);
   if (existing) return existing;
-  const label = text.trim();
+  const label = (text || '').trim();
   if (!label) return null;
-  const nextId = Object.keys(DB.clochers).reduce((m,k) => Math.max(m, Number(k)||0), 0) + 1;
-  DB.clochers[nextId] = label;
-  return String(nextId);
+  const { data: inserted, error } = await sb.from('clochers').insert({ nom: label }).select().single();
+  if (error) { toast('Erreur lors de la création du clocher : ' + error.message); return null; }
+  DB.clochers[inserted.id] = inserted.nom;
+  return String(inserted.id);
 }
 function chantreOptions(lieuId) {
   const list = DB.animateurs.filter(a => String(a.clocher) === String(lieuId));
@@ -1746,27 +1802,38 @@ function openCalForm(editId, prefillDate, prefillLieu) {
   </div>`;
   if (o && o.chantre) document.getElementById('cf-chantre').value = o.chantre;
 }
-function saveCal(editId) {
+async function saveCal(editId) {
   const val = i => document.getElementById(i).value.trim();
   const date = val('cf-date');
   if (!date) { toast('La date est obligatoire'); return; }
-  const lieu = getOrCreateClocherId(val('cf-lieu'));
+  const lieu = await getOrCreateClocherId(val('cf-lieu'));
   if (!lieu) { toast('Le lieu est obligatoire'); return; }
-  const data = { date, horaire: val('cf-horaire'), lieu, evenement: val('cf-evenement')||null,
-    organiste: val('cf-organiste')||null, chantre: val('cf-chantre')||null, custom: readCustomFieldValues('calendrier') };
+  const payload = {
+    date, horaire: val('cf-horaire') || null, lieu_id: Number(lieu),
+    evenement: val('cf-evenement') || null,
+    organiste_id: val('cf-organiste') ? Number(val('cf-organiste')) : null,
+    chantre_id: val('cf-chantre') ? Number(val('cf-chantre')) : null,
+    custom: readCustomFieldValues('calendrier'),
+  };
   if (editId) {
+    const { error } = await sb.from('calendrier').update(payload).eq('id', editId);
+    if (error) { toast('Erreur lors de l’enregistrement : ' + error.message); return; }
     const idx = DB.calendrier.findIndex(o => o.id === editId);
-    DB.calendrier[idx] = { ...DB.calendrier[idx], ...data };
+    DB.calendrier[idx] = { ...DB.calendrier[idx], ...payload, lieu: payload.lieu_id, organiste: payload.organiste_id, chantre: payload.chantre_id };
     toast('Office mis à jour');
   } else {
-    DB.calendrier.push({ id: (DB.calendrier.reduce((m,o)=>Math.max(m,o.id||0),0))+1, ...data });
+    const { data: inserted, error } = await sb.from('calendrier').insert(payload).select().single();
+    if (error) { toast('Erreur lors de l’enregistrement : ' + error.message); return; }
+    DB.calendrier.push({ ...inserted, lieu: inserted.lieu_id, organiste: inserted.organiste_id, chantre: inserted.chantre_id, programmeId: inserted.programme_id });
     toast('Office ajouté');
   }
-  persist(); document.getElementById('cal-form-zone').innerHTML=''; render();
+  document.getElementById('cal-form-zone').innerHTML=''; render();
 }
-function deleteCal(id) {
+async function deleteCal(id) {
+  const { error } = await sb.from('calendrier').delete().eq('id', id);
+  if (error) { toast('Erreur lors de la suppression : ' + error.message); return; }
   DB.calendrier = DB.calendrier.filter(o => o.id !== id);
-  persist(); toast('Office supprimé'); render();
+  toast('Office supprimé'); render();
 }
 
 /* ---------------- Animateurs / Musiciens (CRUD) ---------------- */
@@ -1944,10 +2011,8 @@ function pageAdmin() {
   </div>
   <div class="grid2" style="margin-bottom:16px;">
     <div class="card">
-      <h3>Notifications envoyées</h3>
-      ${DB.notifications.length ? `<table><thead><tr><th>Date</th><th>Programme</th><th>Destinataires</th></tr></thead><tbody>
-        ${[...DB.notifications].reverse().map(n => `<tr><td>${new Date(n.date).toLocaleString('fr-FR')}</td><td>${esc(n.programme)}</td><td>${n.count}</td></tr>`).join('')}
-      </tbody></table>` : `<p class="muted">Aucune notification envoyée pour le moment.</p>`}
+      <h3>Notifications de programmes validés</h3>
+      <p class="muted">Chaque utilisateur reçoit automatiquement une pop-up à la connexion listant les programmes validés qu’il n’a pas encore consultés.</p>
     </div>
     <div class="card">
       <h3>Données de l’application</h3>
