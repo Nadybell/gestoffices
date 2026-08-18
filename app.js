@@ -229,7 +229,7 @@ function can(action) {
   if (ROLE === 'visiteur') return false;
   if (action === 'validate') return ROLE === 'cp' || ROLE === 'webmaster';
   if (action === 'admin') return ROLE === 'webmaster';
-  if (action === 'manage-personnes') return ROLE === 'cp';
+  if (action === 'manage-personnes') return ROLE === 'cp' || ROLE === 'webmaster';
   return true; // animateur, cp, webmaster can edit
 }
 
