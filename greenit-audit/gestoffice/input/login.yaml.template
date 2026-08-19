@@ -1,0 +1,8 @@
+url: "https://gestoffices.nadybabs2023.workers.dev"
+fields:
+  - selector: "#auth-email"
+    value: "__AUDIT_EMAIL__"
+  - selector: "#auth-password"
+    value: "__AUDIT_PASSWORD__"
+loginButtonSelector: "button[onclick=\"handleSignIn()\"]"
+waitForTimeout: 3000
