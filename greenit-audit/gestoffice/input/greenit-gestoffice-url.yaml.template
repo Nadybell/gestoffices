@@ -1,0 +1,20 @@
+# Se connecte via le vrai formulaire (email, mot de passe, clic), puis analyse
+# la page une fois le menu connecté affiché (.role-pill).
+- name: "GestOffice - Accueil (connecté)"
+  url: "https://gestoffices.nadybabs2023.workers.dev"
+  actions:
+    - name: "Saisir l'email"
+      type: "text"
+      element: "#auth-email"
+      content: "$AUDIT_EMAIL"
+    - name: "Saisir le mot de passe"
+      type: "text"
+      element: "#auth-password"
+      content: "$AUDIT_PASSWORD"
+    - name: "Cliquer sur Se connecter"
+      type: "click"
+      element: "button[onclick=\"handleSignIn()\"]"
+      pageChange: true
+      waitForSelector: ".role-pill"
+      waitForTimeout: 7000
+  screenshot: "screenshot-gestoffice.png"
