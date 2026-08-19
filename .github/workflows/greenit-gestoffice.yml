@@ -1,0 +1,50 @@
+name: Audit GreenIT-Analysis
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Récupérer le code (fichiers de config dans greenit-audit/)
+        uses: actions/checkout@v4
+
+      - name: Préparer les dossiers input/output
+        run: |
+          mkdir -p greenit-audit/gestoffice/input greenit-audit/gestoffice/output
+          chmod 755 greenit-audit/gestoffice/input
+          chmod 777 greenit-audit/gestoffice/output
+
+      - name: Attendre que Cloudflare Pages ait fini de déployer
+        run: sleep 90
+
+      - name: Générer url.yaml (avec les vrais identifiants injectés dans les actions de connexion)
+        env:
+          AUDIT_EMAIL: ${{ secrets.AUDIT_ACCOUNT_EMAIL }}
+          AUDIT_PASSWORD: ${{ secrets.AUDIT_ACCOUNT_PASSWORD }}
+        run: |
+          envsubst '${AUDIT_EMAIL} ${AUDIT_PASSWORD}' \
+            < greenit-audit/gestoffice/input/url.yaml.template \
+            > greenit-audit/gestoffice/input/url.yaml
+          echo "--- Contenu généré (email/mot de passe automatiquement masqués par GitHub) ---"
+          cat greenit-audit/gestoffice/input/url.yaml
+
+      - name: Lancer GreenIT-Analysis (Docker, connexion via actions sur la page)
+        run: |
+          docker run --rm --cap-add=SYS_ADMIN \
+            -v ${{ github.workspace }}/greenit-audit/gestoffice/input:/app/input \
+            -v ${{ github.workspace }}/greenit-audit/gestoffice/output:/app/output \
+            -e TZ=Europe/Paris \
+            jpreisner/greenit-analysis-cli \
+            greenit analyse /app/input/url.yaml /app/output/results.html --format=html --ci
+
+      - name: Sauvegarder le rapport (HTML + captures d'écran)
+        uses: actions/upload-artifact@v4
+        with:
+          name: greenit-report
+          path: greenit-audit/gestoffice/output/
+          retention-days: 90
