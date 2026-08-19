@@ -1,6 +1,0 @@
-# Analyse la page d'accueil de GestOffice, une fois connecté (voir login.yaml)
-- name: "GestOffice - Accueil (connecté)"
-  url: "https://gestoffices.nadybabs2023.workers.dev"
-  waitForSelector: "#app"
-  waitForTimeout: 1500
-  screenshot: "screenshot-gestoffice.png"
