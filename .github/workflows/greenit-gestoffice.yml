@@ -22,12 +22,24 @@ jobs:
       - name: Attendre que Cloudflare Pages ait fini de déployer
         run: sleep 90
 
-      - name: Générer login.yaml à partir du modèle (avec les vrais identifiants, jamais commités)
+      - name: Générer login.yaml (avec les vrais identifiants, jamais commités)
+        env:
+          AUDIT_EMAIL: ${{ secrets.AUDIT_ACCOUNT_EMAIL }}
+          AUDIT_PASSWORD: ${{ secrets.AUDIT_ACCOUNT_PASSWORD }}
         run: |
-          sed \
-            -e "s|__AUDIT_EMAIL__|${{ secrets.AUDIT_ACCOUNT_EMAIL }}|" \
-            -e "s|__AUDIT_PASSWORD__|${{ secrets.AUDIT_ACCOUNT_PASSWORD }}|" \
-            greenit-audit/gestoffice/input/login.yaml.template > greenit-audit/gestoffice/input/login.yaml
+          cat > greenit-audit/gestoffice/input/login.yaml << EOF
+          url: "https://gestoffices.nadybabs2023.workers.dev"
+          fields:
+            - selector: "#auth-email"
+              value: "${AUDIT_EMAIL}"
+            - selector: "#auth-password"
+              value: "${AUDIT_PASSWORD}"
+          loginButtonSelector: "button[onclick=\"handleSignIn()\"]"
+          waitForSelector: ".role-pill"
+          waitForTimeout: 7000
+          EOF
+          echo "--- Contenu généré (le mot de passe est automatiquement masqué par GitHub) ---"
+          cat greenit-audit/gestoffice/input/login.yaml
 
       - name: Lancer GreenIT-Analysis (Docker, avec connexion réelle)
         run: |
