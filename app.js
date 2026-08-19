@@ -65,6 +65,29 @@ async function restoreSession() {
   }
 }
 
+/* Lit un cookie par son nom (ou null si absent). */
+function readCookie(name) {
+  const match = document.cookie.match(new RegExp('(?:^|; )' + name + '=([^;]*)'));
+  return match ? decodeURIComponent(match[1]) : null;
+}
+
+/* Réservé aux audits automatisés (ex: YellowLabTools en CI) : si des jetons
+   Supabase sont transmis via cookies (ylt_at / ylt_rt), on démarre une vraie
+   session avec eux, pour que l'outil audite l'application réellement chargée
+   (avec ses vraies données) plutôt que le seul écran de connexion.
+   Sans effet pour un visiteur normal, qui n'a jamais ces cookies. */
+async function restoreSessionFromAuditCookie() {
+  const accessToken = readCookie('ylt_at');
+  const refreshToken = readCookie('ylt_rt');
+  if (!accessToken || !refreshToken) return false;
+  const { data, error } = await sb.auth.setSession({ access_token: accessToken, refresh_token: refreshToken });
+  if (error || !data.session) return false;
+  CURRENT_USER = data.session.user;
+  await fetchCurrentProfile();
+  ROLE = CURRENT_PROFILE ? CURRENT_PROFILE.role : null;
+  return true;
+}
+
 /* ---------------- Chargement des données réelles depuis Supabase ----------------
    Remplace le contenu de DB (jusqu'ici basé sur localStorage/SEED) par les
    vraies données de la base, en conservant EXACTEMENT la même forme d'objets
@@ -291,7 +314,8 @@ function can(action) {
 window.addEventListener('hashchange', render);
 window.addEventListener('DOMContentLoaded', async () => {
   render(); // affiche un état initial (écran de connexion) pendant la vérification
-  await restoreSession();
+  const auditSession = await restoreSessionFromAuditCookie();
+  if (!auditSession) await restoreSession();
   if (ROLE) await loadDBFromSupabase();
   render();
   if (ROLE) { showVacantPopupIfNeeded(); showValidatedProgrammesPopupIfNeeded(); }
