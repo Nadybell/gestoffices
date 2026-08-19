@@ -1,1 +1,58 @@
+name: Audit YellowLabTools
 
+# Se déclenche à chaque push sur la branche principale
+on:
+  push:
+    branches: [main]
+  # Permet aussi de le relancer manuellement depuis l'onglet "Actions" de GitHub
+  workflow_dispatch:
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Installer les dépendances système requises par YellowLabTools
+        run: sudo apt-get update && sudo apt-get install -y libjpeg-dev libfontconfig1
+
+      - name: Installer YellowLabTools
+        run: npm install -g yellowlabtools
+
+      - name: Attendre que Cloudflare Pages ait fini de déployer
+        # Le déploiement Cloudflare se déclenche en parallèle de ce workflow ;
+        # ce délai laisse le temps que la nouvelle version soit bien en ligne
+        # avant de lancer l'audit. Ajuste la durée si besoin (en secondes).
+        run: sleep 90
+
+      - name: Récupérer un jeton de connexion pour le compte d'audit
+        # Se connecte au compte de test dédié (rôle "visiteur") via l'API
+        # Supabase, pour que l'audit porte sur l'application réellement
+        # chargée avec ses données, et non sur le seul écran de connexion.
+        run: |
+          RESPONSE=$(curl -s -X POST "${{ secrets.SUPABASE_URL }}/auth/v1/token?grant_type=password" \
+            -H "apikey: ${{ secrets.SUPABASE_ANON_KEY }}" \
+            -H "Content-Type: application/json" \
+            -d "{\"email\":\"${{ secrets.AUDIT_ACCOUNT_EMAIL }}\",\"password\":\"${{ secrets.AUDIT_ACCOUNT_PASSWORD }}\"}")
+          echo "ACCESS_TOKEN=$(echo $RESPONSE | node -pe 'JSON.parse(require("fs").readFileSync(0,"utf8")).access_token')" >> $GITHUB_ENV
+          echo "REFRESH_TOKEN=$(echo $RESPONSE | node -pe 'JSON.parse(require("fs").readFileSync(0,"utf8")).refresh_token')" >> $GITHUB_ENV
+
+      - name: Lancer l'audit sur le site en ligne (session authentifiée)
+        # Remplace l'URL ci-dessous par celle de ton site si elle change un jour
+        run: |
+          yellowlabtools https://gestoffices.nadybabs2023.workers.dev \
+            --cookie="ylt_at=${ACCESS_TOKEN};domain=gestoffices.nadybabs2023.workers.dev|ylt_rt=${REFRESH_TOKEN};domain=gestoffices.nadybabs2023.workers.dev" \
+            > ylt-report.json
+
+      - name: Afficher un résumé rapide dans les logs
+        run: |
+          echo "=== Scores YellowLabTools ==="
+          node -e "
+            const r = require('./ylt-report.json');
+            console.log('Score global     :', r.scoreProfiles?.default?.globalScore ?? 'n/a');
+          " || echo "Impossible d'extraire le résumé, voir le rapport complet en pièce jointe."
+
+      - name: Sauvegarder le rapport complet (JSON)
+        uses: actions/upload-artifact@v4
+        with:
+          name: yellowlabtools-report
+          path: ylt-report.json
+          retention-days: 90
