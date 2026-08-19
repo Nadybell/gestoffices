@@ -10,17 +10,30 @@ on:
 jobs:
   audit:
     runs-on: ubuntu-latest
+    # Filet de sécurité global : quoi qu'il arrive, ce job s'arrête après
+    # 15 minutes maximum. Plus jamais de blocage silencieux et invisible.
+    timeout-minutes: 15
     steps:
-      - name: Installer les dépendances système requises par YellowLabTools
-        run: sudo apt-get update && sudo apt-get install -y libjpeg-dev libfontconfig1
+      - name: Démarrer le serveur YellowLabTools (Docker, pré-construit — pas d'installation à la volée)
+        run: docker run -d --privileged -p 8383:8383 --name ylt ousamabenyounes/yellowlabtools
 
-      - name: Installer YellowLabTools
-        run: npm install -g yellowlabtools
+      - name: Attendre que le serveur soit prêt
+        timeout-minutes: 3
+        run: |
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:8383/ > /dev/null; then
+              echo "Serveur YLT prêt."
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "Le serveur YLT n'a pas démarré à temps."
+          exit 1
 
       - name: Attendre que Cloudflare Pages ait fini de déployer
         # Le déploiement Cloudflare se déclenche en parallèle de ce workflow ;
         # ce délai laisse le temps que la nouvelle version soit bien en ligne
-        # avant de lancer l'audit. Ajuste la durée si besoin (en secondes).
+        # avant de lancer l'audit.
         run: sleep 90
 
       - name: Récupérer un jeton de connexion pour le compte d'audit
@@ -35,12 +48,31 @@ jobs:
           echo "ACCESS_TOKEN=$(echo $RESPONSE | node -pe 'JSON.parse(require("fs").readFileSync(0,"utf8")).access_token')" >> $GITHUB_ENV
           echo "REFRESH_TOKEN=$(echo $RESPONSE | node -pe 'JSON.parse(require("fs").readFileSync(0,"utf8")).refresh_token')" >> $GITHUB_ENV
 
-      - name: Lancer l'audit sur le site en ligne (session authentifiée)
-        # Remplace l'URL ci-dessous par celle de ton site si elle change un jour
+      - name: Lancer l'audit (session authentifiée)
         run: |
-          yellowlabtools https://gestoffices.nadybabs2023.workers.dev \
-            --cookie="ylt_at=${ACCESS_TOKEN};domain=gestoffices.nadybabs2023.workers.dev|ylt_rt=${REFRESH_TOKEN};domain=gestoffices.nadybabs2023.workers.dev" \
-            > ylt-report.json
+          COOKIE="ylt_at=${ACCESS_TOKEN};domain=gestoffices.nadybabs2023.workers.dev|ylt_rt=${REFRESH_TOKEN};domain=gestoffices.nadybabs2023.workers.dev"
+          RUN_ID=$(curl -s -X POST http://localhost:8383/api/runs \
+            -H "Content-Type: application/json" \
+            -d "{\"url\":\"https://gestoffices.nadybabs2023.workers.dev\",\"waitForResponse\":false,\"cookie\":\"$COOKIE\"}" \
+            | node -pe 'JSON.parse(require("fs").readFileSync(0,"utf8")).runId')
+          echo "RUN_ID=$RUN_ID" >> $GITHUB_ENV
+          echo "Run lancé, id : $RUN_ID"
+
+      - name: Attendre la fin de l'audit (avec limite de temps)
+        timeout-minutes: 5
+        run: |
+          for i in $(seq 1 60); do
+            STATUS=$(curl -s http://localhost:8383/api/runs/$RUN_ID | node -pe 'JSON.parse(require("fs").readFileSync(0,"utf8")).status.statusCode')
+            echo "Statut : $STATUS"
+            if [ "$STATUS" == "complete" ]; then exit 0; fi
+            if [ "$STATUS" == "failed" ]; then echo "L'audit a échoué côté YellowLabTools."; exit 1; fi
+            sleep 5
+          done
+          echo "L'audit n'a pas terminé dans le temps imparti."
+          exit 1
+
+      - name: Récupérer le rapport complet
+        run: curl -s http://localhost:8383/api/results/$RUN_ID > ylt-report.json
 
       - name: Afficher un résumé rapide dans les logs
         run: |
