@@ -10,8 +10,17 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - name: Installer Lighthouse
-        run: npm install -g lighthouse
+      - name: Récupérer le code (script lighthouse-audit.js)
+        uses: actions/checkout@v4
+
+      - name: Installer Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Installer Puppeteer et Lighthouse
+        working-directory: lighthouse-audit
+        run: npm install puppeteer lighthouse
 
       - name: Autoriser Chrome à démarrer dans cet environnement (restriction noyau Ubuntu)
         run: |
@@ -21,36 +30,18 @@ jobs:
       - name: Attendre que Cloudflare Pages ait fini de déployer
         run: sleep 90
 
-      - name: Récupérer un jeton de connexion pour le compte d'audit
-        run: |
-          RESPONSE=$(curl -s -X POST "${{ secrets.SUPABASE_URL }}/auth/v1/token?grant_type=password" \
-            -H "apikey: ${{ secrets.SUPABASE_ANON_KEY }}" \
-            -H "Content-Type: application/json" \
-            -d "{\"email\":\"${{ secrets.AUDIT_ACCOUNT_EMAIL }}\",\"password\":\"${{ secrets.AUDIT_ACCOUNT_PASSWORD }}\"}")
-          echo "ACCESS_TOKEN=$(echo $RESPONSE | node -pe 'JSON.parse(require("fs").readFileSync(0,"utf8")).access_token')" >> $GITHUB_ENV
-          echo "REFRESH_TOKEN=$(echo $RESPONSE | node -pe 'JSON.parse(require("fs").readFileSync(0,"utf8")).refresh_token')" >> $GITHUB_ENV
-
-      - name: Lancer Lighthouse (session authentifiée)
-        run: |
-          lighthouse https://gestoffices.nadybabs2023.workers.dev \
-            --output=json --output-path=lighthouse-report.json \
-            --chrome-flags="--headless --no-sandbox" \
-            --extra-headers="{\"Cookie\":\"ylt_at=${ACCESS_TOKEN}; ylt_rt=${REFRESH_TOKEN}\"}"
-
-      - name: Afficher un résumé rapide dans les logs
-        run: |
-          echo "=== Scores Lighthouse ==="
-          node -e "
-            const r = require('./lighthouse-report.json');
-            console.log('Performance     :', Math.round(r.categories.performance.score * 100));
-            console.log('Accessibilité   :', Math.round(r.categories.accessibility.score * 100));
-            console.log('Bonnes pratiques:', Math.round(r.categories['best-practices'].score * 100));
-            console.log('SEO             :', Math.round(r.categories.seo.score * 100));
-          "
+      - name: Lancer l'audit (connexion réelle via Puppeteer, puis Lighthouse)
+        working-directory: lighthouse-audit
+        env:
+          TARGET_URL: https://gestoffices.nadybabs2023.workers.dev
+          AUDIT_EMAIL: ${{ secrets.AUDIT_ACCOUNT_EMAIL }}
+          AUDIT_PASSWORD: ${{ secrets.AUDIT_ACCOUNT_PASSWORD }}
+          OUTPUT_PATH: lighthouse-report.json
+        run: node lighthouse-audit.js
 
       - name: Sauvegarder le rapport
         uses: actions/upload-artifact@v4
         with:
           name: lighthouse-report
-          path: lighthouse-report.json
+          path: lighthouse-audit/lighthouse-report.json
           retention-days: 90
