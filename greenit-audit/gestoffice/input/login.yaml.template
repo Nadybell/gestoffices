@@ -5,4 +5,5 @@ fields:
   - selector: "#auth-password"
     value: "__AUDIT_PASSWORD__"
 loginButtonSelector: "button[onclick=\"handleSignIn()\"]"
-waitForTimeout: 3000
+waitForSelector: ".role-pill"
+waitForTimeout: 7000
