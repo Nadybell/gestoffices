@@ -24,6 +24,11 @@ jobs:
           cp package.audit.json package.json
           npm install
 
+      - name: Autoriser Chrome à démarrer dans cet environnement (restriction noyau Ubuntu)
+        run: |
+          echo 'kernel.apparmor_restrict_unprivileged_userns=0' | sudo tee -a /etc/sysctl.d/60-apparmor-namespace.conf
+          sudo sysctl --system
+
       - name: Attendre que Cloudflare Pages ait fini de déployer
         run: sleep 90
 
