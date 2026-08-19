@@ -53,7 +53,7 @@ jobs:
           COOKIE="ylt_at=${ACCESS_TOKEN};domain=gestoffices.nadybabs2023.workers.dev|ylt_rt=${REFRESH_TOKEN};domain=gestoffices.nadybabs2023.workers.dev"
           RUN_ID=$(curl -s -X POST http://localhost:8383/api/runs \
             -H "Content-Type: application/json" \
-            -d "{\"url\":\"https://gestoffices.nadybabs2023.workers.dev\",\"waitForResponse\":false,\"cookie\":\"$COOKIE\"}" \
+            -d "{\"url\":\"https://gestoffices.nadybabs2023.workers.dev\",\"waitForResponse\":false,\"cookie\":\"$COOKIE\",\"screenshot\":true}" \
             | node -pe 'JSON.parse(require("fs").readFileSync(0,"utf8")).runId')
           echo "RUN_ID=$RUN_ID" >> $GITHUB_ENV
           echo "Run lancé, id : $RUN_ID"
@@ -74,17 +74,32 @@ jobs:
       - name: Récupérer le rapport complet
         run: curl -s http://localhost:8383/api/results/$RUN_ID > ylt-report.json
 
+      - name: Récupérer la capture d'écran (vérification visuelle)
+        run: curl -s http://localhost:8383/api/results/$RUN_ID/screenshot.jpg > ylt-screenshot.jpg
+
       - name: Afficher un résumé rapide dans les logs
         run: |
           echo "=== Scores YellowLabTools ==="
           node -e "
             const r = require('./ylt-report.json');
-            console.log('Score global     :', r.scoreProfiles?.default?.globalScore ?? 'n/a');
+            function findScores(obj, path) {
+              if (obj && typeof obj === 'object') {
+                for (const k in obj) {
+                  if (k.toLowerCase().includes('globalscore')) {
+                    console.log((path + '.' + k).slice(1), ':', obj[k]);
+                  }
+                  findScores(obj[k], path + '.' + k);
+                }
+              }
+            }
+            findScores(r, '');
           " || echo "Impossible d'extraire le résumé, voir le rapport complet en pièce jointe."
 
-      - name: Sauvegarder le rapport complet (JSON)
+      - name: Sauvegarder le rapport et la capture d'écran
         uses: actions/upload-artifact@v4
         with:
           name: yellowlabtools-report
-          path: ylt-report.json
+          path: |
+            ylt-report.json
+            ylt-screenshot.jpg
           retention-days: 90
