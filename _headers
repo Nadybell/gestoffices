@@ -1,0 +1,18 @@
+# Fichier de configuration Cloudflare Pages : définit les en-têtes HTTP
+# personnalisés par chemin. Répond à la bonne pratique RGESN RWEB-0075
+# ("Ajouter des entêtes Expires ou Cache-Control").
+#
+# Documentation Cloudflare : https://developers.cloudflare.com/pages/configuration/headers/
+
+# app.js n'a pas de nom de fichier "hashé" (pas d'étape de build), donc on
+# choisit une durée de cache modérée plutôt que très longue : ça réduit
+# nettement les téléchargements répétés pour un même visiteur, sans risquer
+# qu'il reste bloqué trop longtemps sur une ancienne version après une mise
+# à jour du code.
+/app.js
+  Cache-Control: public, max-age=86400
+
+# index.html reste très léger (quelques Ko) : on préfère qu'il soit toujours
+# revérifié, pour être sûr que le point d'entrée du site reste à jour.
+/index.html
+  Cache-Control: public, max-age=0, must-revalidate
